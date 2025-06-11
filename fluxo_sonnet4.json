@@ -1,0 +1,588 @@
+import json
+
+# Workflow Principal - Bread & Meat Delivery
+main_workflow = {
+    "name": "Bread & Meat Delivery - Atendimento WhatsApp",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "whatsapp-webhook",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "webhook-evolution",
+            "name": "WhatsApp Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [200, 300],
+            "webhookId": "whatsapp-webhook"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": True,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.data.fromMe }}",
+                            "rightValue": False,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equal"
+                            }
+                        },
+                        {
+                            "leftValue": "={{ $json.data.messageType }}",
+                            "rightValue": "conversation,audioMessage,extendedTextMessage,ephemeralMessage",
+                            "operator": {
+                                "type": "string",
+                                "operation": "contains"
+                            }
+                        }
+                    ],
+                    "combineOperation": "all"
+                }
+            },
+            "id": "filter-valid-messages",
+            "name": "Filtrar Mensagens Válidas",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [400, 300]
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "phone",
+                            "name": "phone",
+                            "value": "={{ $json.data.key.remoteJid.replace('@s.whatsapp.net', '') }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "message_text",
+                            "name": "message_text", 
+                            "value": "={{ $json.data.message?.conversation || $json.data.message?.extendedTextMessage?.text || '' }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "message_type",
+                            "name": "message_type",
+                            "value": "={{ $json.data.messageType }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "audio_base64",
+                            "name": "audio_base64",
+                            "value": "={{ $json.data.message?.audioMessage?.data || '' }}",
+                            "type": "string"
+                        }
+                    ]
+                }
+            },
+            "id": "extract-message-data",
+            "name": "Extrair Dados da Mensagem",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3,
+            "position": [600, 300]
+        },
+        {
+            "parameters": {
+                "command": "get",
+                "key": "=traplist-{{ $json.phone }}",
+                "options": {}
+            },
+            "id": "check-traplist",
+            "name": "Verificar Traplist",
+            "type": "n8n-nodes-base.redis",
+            "typeVersion": 1,
+            "position": [800, 300],
+            "credentials": {
+                "redis": {
+                    "id": "redis-credentials",
+                    "name": "Redis Credentials"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": True,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.response }}",
+                            "rightValue": "blocked",
+                            "operator": {
+                                "type": "string",
+                                "operation": "notEqual"
+                            }
+                        }
+                    ],
+                    "combineOperation": "all"
+                }
+            },
+            "id": "check-if-blocked",
+            "name": "Verificar se Bloqueado",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [1000, 300]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": True,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.message_type }}",
+                            "rightValue": "audioMessage",
+                            "operator": {
+                                "type": "string",
+                                "operation": "equal"
+                            }
+                        }
+                    ],
+                    "combineOperation": "all"
+                }
+            },
+            "id": "check-audio-message",
+            "name": "Verificar Mensagem de Áudio",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [1200, 300]
+        },
+        {
+            "parameters": {
+                "resource": "audio",
+                "operation": "transcribe",
+                "file": "={{ $json.audio_base64 }}",
+                "options": {
+                    "model": "whisper-1"
+                }
+            },
+            "id": "transcribe-audio",
+            "name": "Transcrever Áudio",
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 1,
+            "position": [1400, 200],
+            "credentials": {
+                "openAiApi": {
+                    "id": "openai-credentials",
+                    "name": "OpenAI Credentials"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "mode": "combine",
+                "combinationMode": "mergeByPosition",
+                "options": {}
+            },
+            "id": "merge-text",
+            "name": "Merge Texto",
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 2,
+            "position": [1600, 300]
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "final_text",
+                            "name": "final_text",
+                            "value": "={{ $json.text || $json.message_text }}",
+                            "type": "string"
+                        }
+                    ]
+                }
+            },
+            "id": "prepare-final-text",
+            "name": "Preparar Texto Final",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3,
+            "position": [1800, 300]
+        },
+        {
+            "parameters": {
+                "agent": "conversationalAgent",
+                "promptType": "define",
+                "text": """Você é o atendente virtual da Bread & Meat Delivery, uma hamburgueria artesanal. Seu objetivo é atender clientes via WhatsApp de forma natural e eficiente.
+
+## REGRAS FUNDAMENTAIS:
+1. SEMPRE seja educado, prestativo e use linguagem natural brasileira
+2. NUNCA invente informações sobre produtos ou preços
+3. SEMPRE use as ferramentas disponíveis para buscar informações
+4. Mantenha o contexto da conversa usando a memória
+
+## FLUXO DE ATENDIMENTO:
+
+### 1. SAUDAÇÃO E CARDÁPIO
+- Ao receber saudações (oi, olá, bom dia, etc.), responda educadamente e envie o cardápio
+- Use a ferramenta 'enviar_cardapio' para mostrar as opções
+
+### 2. BUSCA DE ITENS
+- Quando o cliente mencionar um produto, use 'buscar_itens' para encontrar opções
+- Apresente os resultados numerados para facilitar a seleção
+
+### 3. SELEÇÃO E ADIÇÃO
+- Quando o cliente escolher por número ou nome, use 'adicionar_item_confirmado'
+- Confirme cada adição e mostre o total parcial
+
+### 4. CÁLCULO DE FRETE
+- Quando perguntado sobre entrega, use 'calcula_frete' com o endereço
+- Explique o valor e tempo estimado
+
+### 5. FINALIZAÇÃO
+- Confirme todos os itens, total e endereço
+- Use 'cadastrar_pedido' para registrar
+- Use 'SendWhatsappInvoice' para notificar a cozinha
+
+## COMANDOS ESPECIAIS:
+- @start: reativar atendimento
+- @stop: pausar atendimento
+
+Seja sempre natural, amigável e eficiente!""",
+                "options": {
+                    "systemMessage": "Você é um atendente especializado em delivery de hambúrgueres artesanais."
+                },
+                "model": {
+                    "model": "gpt-4o-mini",
+                    "options": {
+                        "temperature": 0.3
+                    }
+                },
+                "memory": {
+                    "type": "redisBufferMemory",
+                    "sessionKey": "={{ $json.phone }}",
+                    "contextWindowLength": 10
+                },
+                "tools": [
+                    {
+                        "name": "enviar_cardapio",
+                        "description": "Envia as imagens do cardápio para o cliente",
+                        "toolWorkflow": "tool_enviar_cardapio"
+                    },
+                    {
+                        "name": "buscar_itens", 
+                        "description": "Busca itens no cardápio por termo de pesquisa",
+                        "toolWorkflow": "tool_buscar_itens"
+                    },
+                    {
+                        "name": "adicionar_item_confirmado",
+                        "description": "Adiciona um item confirmado ao pedido",
+                        "toolWorkflow": "tool_adicionar_item"
+                    },
+                    {
+                        "name": "calcula_frete",
+                        "description": "Calcula o frete baseado no endereço de entrega",
+                        "toolWorkflow": "tool_calcular_frete"
+                    },
+                    {
+                        "name": "cadastrar_pedido",
+                        "description": "Finaliza e cadastra o pedido no sistema",
+                        "toolWorkflow": "tool_cadastrar_pedido"
+                    },
+                    {
+                        "name": "SendWhatsappInvoice",
+                        "description": "Envia notificação do pedido para a cozinha",
+                        "toolWorkflow": "tool_notificar_cozinha"
+                    }
+                ]
+            },
+            "id": "langchain-agent",
+            "name": "Agente Bread & Meat",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1,
+            "position": [2000, 300],
+            "credentials": {
+                "openAiApi": {
+                    "id": "openai-credentials",
+                    "name": "OpenAI Credentials"
+                },
+                "redis": {
+                    "id": "redis-credentials", 
+                    "name": "Redis Credentials"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "insert",
+                "table": "chat_messages",
+                "records": [
+                    {
+                        "phone": "={{ $json.phone }}",
+                        "message": "={{ $json.final_text }}",
+                        "response": "={{ $json.output }}",
+                        "timestamp": "={{ $now }}",
+                        "message_type": "={{ $json.message_type }}"
+                    }
+                ]
+            },
+            "id": "save-to-supabase",
+            "name": "Salvar no Supabase",
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [2200, 300],
+            "credentials": {
+                "supabaseApi": {
+                    "id": "supabase-credentials",
+                    "name": "Supabase Credentials"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "={{ $env.EVOLUTION_API_URL }}/message/sendText/{{ $env.EVOLUTION_INSTANCE }}",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendHeaders": True,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "apikey",
+                            "value": "={{ $env.EVOLUTION_API_KEY }}"
+                        }
+                    ]
+                },
+                "sendBody": True,
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "number",
+                            "value": "={{ $json.phone }}"
+                        },
+                        {
+                            "name": "text",
+                            "value": "={{ $json.output }}"
+                        }
+                    ]
+                }
+            },
+            "id": "send-whatsapp-response",
+            "name": "Enviar Resposta WhatsApp",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4,
+            "position": [2400, 300]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ { \"status\": \"success\", \"message\": \"Mensagem processada\" } }}"
+            },
+            "id": "webhook-response",
+            "name": "Webhook Response",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1,
+            "position": [2600, 300]
+        }
+    ],
+    "connections": {
+        "WhatsApp Webhook": {
+            "main": [
+                [
+                    {
+                        "node": "Filtrar Mensagens Válidas",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Filtrar Mensagens Válidas": {
+            "main": [
+                [
+                    {
+                        "node": "Extrair Dados da Mensagem",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extrair Dados da Mensagem": {
+            "main": [
+                [
+                    {
+                        "node": "Verificar Traplist",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Verificar Traplist": {
+            "main": [
+                [
+                    {
+                        "node": "Verificar se Bloqueado",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Verificar se Bloqueado": {
+            "main": [
+                [
+                    {
+                        "node": "Verificar Mensagem de Áudio",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Verificar Mensagem de Áudio": {
+            "main": [
+                [
+                    {
+                        "node": "Merge Texto",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Transcrever Áudio",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Transcrever Áudio": {
+            "main": [
+                [
+                    {
+                        "node": "Merge Texto",
+                        "type": "main",
+                        "index": 1
+                    }
+                ]
+            ]
+        },
+        "Merge Texto": {
+            "main": [
+                [
+                    {
+                        "node": "Preparar Texto Final",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Preparar Texto Final": {
+            "main": [
+                [
+                    {
+                        "node": "Agente Bread & Meat",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Agente Bread & Meat": {
+            "main": [
+                [
+                    {
+                        "node": "Salvar no Supabase",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Salvar no Supabase": {
+            "main": [
+                [
+                    {
+                        "node": "Enviar Resposta WhatsApp",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Enviar Resposta WhatsApp": {
+            "main": [
+                [
+                    {
+                        "node": "Webhook Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "staticData": None,
+    "tags": ["whatsapp", "delivery", "langchain", "automation"],
+    "triggerCount": 1,
+    "updatedAt": "2024-06-11T00:00:00.000Z",
+    "versionId": "1"
+}
+
+# Salvar o workflow principal
+with open('BreadMeat_Main_Workflow.json', 'w', encoding='utf-8') as f:
+    json.dump(main_workflow, f, indent=2, ensure_ascii=False)
+
+print("✅ Workflow principal gerado: BreadMeat_Main_Workflow.json")
+``````python
+import json
+
+# Workflow Principal - Bread & Meat Delivery
+main_workflow = {
+    "name": "Bread & Meat Delivery - Atendimento WhatsApp",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "whatsapp-webhook",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "webhook-evolution",
+            "name": "WhatsApp Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [200, 300],
+            "webhookId": "whatsapp-webhook"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": True,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.data.fromMe }}",
+                            "rightValue": False,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equal"
+                            }
+                        },
+                        {
+                            "leftV
