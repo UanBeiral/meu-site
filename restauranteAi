@@ -1,0 +1,537 @@
+{
+  "name": "Bread & Meat - Agente de Atendimento WhatsApp",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "webhook-whatsapp",
+        "options": {}
+      },
+      "id": "27843818-a629-41d3-8884-25e173e970b1",
+      "name": "Webhook - Recebe Mensagem (Evolution API)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.2,
+      "position": [
+        420,
+        300
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "YOUR_EVOLUTION_API_CREDENTIALS_ID",
+          "name": "Evolution API Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "{{ $json.body.data.fromMe }}",
+              "operation": "boolean",
+              "value2": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e4450371-afe6-4f46-9993-9c8e815e1008",
+      "name": "É mensagem do Cliente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "hGet",
+        "key": "traplist-{{ $json.body.data.key.remoteJid.split('@')[0] }}",
+        "field": "status",
+        "options": {}
+      },
+      "id": "893d5673-a120-4228-ad85-971c08008e92",
+      "name": "Verifica Traplist no Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ],
+      "credentials": {
+        "redis": {
+          "id": "YOUR_REDIS_CREDENTIALS_ID",
+          "name": "Redis Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "{{ $json.value }}",
+              "operation": "isEmpty"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "426d03d4-1f6e-4f0e-9189-d9d3000a6534",
+      "name": "Atendimento Ativo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "chatModel": {
+          "chatModel": "openAiChat",
+          "model": "gpt-4-turbo",
+          "jsonOutput": true,
+          "temperature": 0.3
+        },
+        "memory": {
+          "memory": "redis",
+          "sessionKey": "msgs-{{ $json.body.data.key.remoteJid.split('@')[0] }}",
+          "memoryKey": "chat_history"
+        },
+        "tools": {
+          "tools": [
+            {
+              "tool": "n8nWorkflow",
+              "name": "enviar_cardapio",
+              "workflowId": "SUBWORKFLOW_ENVIAR_CARDAPIO_ID",
+              "description": "Envia o cardápio com as opções de lanches para o cliente. Use esta ferramenta quando o cliente cumprimentar ou pedir explicitamente pelo cardápio."
+            },
+            {
+              "tool": "n8nWorkflow",
+              "name": "buscar_itens",
+              "workflowId": "SUBWORKFLOW_BUSCAR_ITENS_ID",
+              "description": "Busca por itens específicos no cardápio com base na descrição fornecida pelo cliente. Retorna os itens encontrados com seus preços."
+            },
+            {
+              "tool": "n8nWorkflow",
+              "name": "adicionar_item_confirmado",
+              "workflowId": "SUBWORKFLOW_ADICIONAR_ITEM_ID",
+              "description": "Adiciona um item selecionado pelo cliente ao pedido atual. Requer o nome e a quantidade do item."
+            },
+            {
+              "tool": "n8nWorkflow",
+              "name": "calcula_frete",
+              "workflowId": "SUBWORKFLOW_CALCULA_FRETE_ID",
+              "description": "Calcula a taxa de entrega com base no endereço ou CEP fornecido pelo cliente. Deve ser chamada após o cliente informar seu endereço."
+            },
+            {
+              "tool": "n8nWorkflow",
+              "name": "cadastrar_pedido",
+              "workflowId": "SUBWORKFLOW_CADASTRAR_PEDIDO_ID",
+              "description": "Finaliza o pedido do cliente, salvando-o no banco de dados. Use esta ferramenta somente após o cliente confirmar todos os itens, o endereço de entrega e o valor total."
+            },
+            {
+              "tool": "n8nWorkflow",
+              "name": "SendWhatsappInvoice",
+              "workflowId": "SUBWORKFLOW_NOTIFICAR_COZINHA_ID",
+              "description": "Envia uma notificação com o resumo do pedido para a cozinha via WhatsApp."
+            }
+          ]
+        },
+        "prompt": {
+          "system": "Você é um atendente de hamburgueria chamado Bread & Meat. Seu objetivo é guiar o cliente de forma amigável e eficiente.\nRegras:\n1.  **Saudação**: Ao receber uma saudação (oi, olá, boa noite), use a ferramenta `enviar_cardapio`.\n2.  **Seleção de Itens**: O cliente pode descrever o que quer. Use `buscar_itens` para encontrar as opções. Após o cliente escolher, use `adicionar_item_confirmado`.\n3.  **Endereço e Frete**: Pergunte o endereço do cliente para a entrega e use a ferramenta `calcula_frete`.\n4.  **Confirmação**: Antes de finalizar, apresente um resumo completo do pedido (itens, total dos itens, frete e total geral) e peça a confirmação do cliente.\n5.  **Finalização**: Se o cliente confirmar, use `cadastrar_pedido` e, em seguida, `SendWhatsappInvoice` para notificar a cozinha. Despeça-se cordialmente.",
+          "human": "{{ $json.body.message.conversation || $json.body.message.extendedTextMessage.text }}"
+        },
+        "options": {}
+      },
+      "id": "e0d37651-6893-4e4f-b2b9-62ef9cf1e44f",
+      "name": "Agente de Atendimento (LLM)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_OPENAI_CREDENTIALS_ID",
+          "name": "OpenAI Credentials"
+        },
+        "redis": {
+          "id": "YOUR_REDIS_CREDENTIALS_ID",
+          "name": "Redis Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "tableName": "chat_messages",
+        "columns": {
+          "additionalFields": {
+            "values": [
+              {
+                "name": "session_id",
+                "value": "={{ $json.body.data.key.remoteJid }}"
+              },
+              {
+                "name": "sender",
+                "value": "client"
+              },
+              {
+                "name": "message",
+                "value": "={{ $json.body.message.conversation || $json.body.message.extendedTextMessage.text }}"
+              },
+              {
+                "name": "from_me",
+                "value": false
+              }
+            ]
+          }
+        },
+        "options": {}
+      },
+      "id": "c616644f-c002-4fc9-b630-f925032b404d",
+      "name": "Salva Mensagem Cliente (Supabase)",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        520
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "YOUR_SUPABASE_CREDENTIALS_ID",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "instanceUrl": "YOUR_EVOLUTION_API_URL",
+        "apiKey": "YOUR_EVOLUTION_API_KEY",
+        "operation": "sendMessage",
+        "number": "={{ $json.body.data.key.remoteJid }}",
+        "message": "={{ $json.output }}",
+        "options": {}
+      },
+      "id": "2d148421-a3f2-4916-a14a-74f4b9319acb",
+      "name": "Envia Resposta (WhatsApp)",
+      "type": "n8n-nodes-base.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        300
+      ],
+      "credentials": {
+        "evolutionApi": {
+          "id": "YOUR_EVOLUTION_API_CREDENTIALS_ID",
+          "name": "Evolution API Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "tableName": "chat_messages",
+        "columns": {
+          "additionalFields": {
+            "values": [
+              {
+                "name": "session_id",
+                "value": "={{ $json.body.data.key.remoteJid }}"
+              },
+              {
+                "name": "sender",
+                "value": "bot"
+              },
+              {
+                "name": "message",
+                "value": "={{ $json.output }}"
+              },
+              {
+                "name": "from_me",
+                "value": true
+              }
+            ]
+          }
+        },
+        "options": {}
+      },
+      "id": "e8e9f8f4-6e6b-4e1b-99d8-8c1d5b364e7a",
+      "name": "Salva Resposta Bot (Supabase)",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "YOUR_SUPABASE_CREDENTIALS_ID",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "{{ $json.body.message.audioMessage }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a9e1e7f6-93c6-4d2c-87d4-06922cfb9c6d",
+      "name": "É mensagem de Áudio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        860,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "model": "whisper-1",
+        "responseFormat": "json",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "f5c9e2d3-1a2c-4b5d-9c8e-5d4f3b2a1c2d",
+      "name": "Transcreve Áudio (OpenAI)",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        620
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_OPENAI_CREDENTIALS_ID",
+          "name": "OpenAI Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutes": 15
+            }
+          ]
+        }
+      },
+      "id": "b3e4d5f6-7a8b-9c0d-1e2f-3a4b5c6d7e8f",
+      "name": "Follow-up a cada 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        420,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableName": "chats",
+        "filters": {
+          "filters": [
+            {
+              "field": "status",
+              "operator": "eq",
+              "value": "pendente_resposta"
+            },
+            {
+              "field": "updated_at",
+              "operator": "lt",
+              "value": "{{ $now.minus({ minutes: 15 }).toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c7d8e9f0-a1b2-c3d4-e5f6-a7b8c9d0e1f2",
+      "name": "Busca Chats Inativos (Supabase)",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        800
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "YOUR_SUPABASE_CREDENTIALS_ID",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "instanceUrl": "YOUR_EVOLUTION_API_URL",
+        "apiKey": "YOUR_EVOLUTION_API_KEY",
+        "operation": "sendMessage",
+        "number": "={{ $json.session_id }}",
+        "message": "Olá! Notei que não continuamos nossa conversa. Ainda precisa de ajuda com o seu pedido?",
+        "options": {}
+      },
+      "id": "d1e2f3a4-b5c6-d7e8-f9a0-b1c2d3e4f5a6",
+      "name": "Envia Follow-up (WhatsApp)",
+      "type": "n8n-nodes-base.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        860,
+        800
+      ],
+      "credentials": {
+        "evolutionApi": {
+          "id": "YOUR_EVOLUTION_API_CREDENTIALS_ID",
+          "name": "Evolution API Credentials"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Recebe Mensagem (Evolution API)": {
+      "main": [
+        [
+          {
+            "node": "É mensagem do Cliente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "É mensagem do Cliente?": {
+      "main": [
+        [
+          {
+            "node": "Verifica Traplist no Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verifica Traplist no Redis": {
+      "main": [
+        [
+          {
+            "node": "Atendimento Ativo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atendimento Ativo?": {
+      "main": [
+        [
+          {
+            "node": "Agente de Atendimento (LLM)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "É mensagem de Áudio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente de Atendimento (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Envia Resposta (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envia Resposta (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Salva Resposta Bot (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "É mensagem de Áudio?": {
+      "main": [
+        [
+          {
+            "node": "Transcreve Áudio (OpenAI)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Salva Mensagem Cliente (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcreve Áudio (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "Salva Mensagem Cliente (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-up a cada 15 min": {
+      "main": [
+        [
+          {
+            "node": "Busca Chats Inativos (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Busca Chats Inativos (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Envia Follow-up (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salva Mensagem Cliente (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Agente de Atendimento (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}
