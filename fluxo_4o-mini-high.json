@@ -1,0 +1,188 @@
+[
+  {
+    "name": "Bread & Meat Delivery Main",
+    "id": "1",
+    "active": true,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "evolution-webhook",
+          "responseMode": "lastNode"
+        },
+        "name": "Webhook Evolution",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 1,
+        "position": [
+          250,
+          150
+        ]
+      },
+      {
+        "parameters": {
+          "functionCode": "// Parse Evolution API payload to extract phone, message, name, session, address\nconst body = items[0].json;\nconst text = body.text || (body.extendedTextMessage && body.extendedTextMessage.text) || '';\nconst phone = body.from.replace(/@.*$/, '');\nreturn [{ json: {\n  phone,\n  message: text.trim(),\n  customer_name: body.name,\n  session_id: body.ConversationID,\n  address: body.location\n}}];"
+        },
+        "name": "Parse Payload",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 1,
+        "position": [
+          450,
+          150
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "hgetall",
+          "key": "memory-{{$json.phone}}"
+        },
+        "name": "Redis Get Memory",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          650,
+          150
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "sismember",
+          "key": "traplist",
+          "member": "={{$json.phone}}"
+        },
+        "name": "Redis Check Traplist",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          850,
+          150
+        ]
+      },
+      {
+        "parameters": {
+          "rules": [
+            {
+              "value1": "={{$node[\"Redis Check Traplist\"].json[\"value\"]}}",
+              "operation": "equal",
+              "value2": 1
+            }
+          ],
+          "defaultOutput": "default"
+        },
+        "name": "Switch: Trapped?",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 1,
+        "position": [
+          1050,
+          150
+        ]
+      },
+      {
+        "parameters": {
+          "functionCode": "// Handle commands when trapped\nconst msg = $json.message.toLowerCase();\nreturn [{ json: { command: msg === '@start' ? 'start' : '' }}];"
+        },
+        "name": "Check Command (Trapped)",
+        "type": "n8n-nodes-base.function",
+        "typeVersion": 1,
+        "position": [
+          1250,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "rules": [
+            {
+              "value1": "={{$node[\"Check Command (Trapped)\"].json.command}}",
+              "operation": "equal",
+              "value2": "start"
+            }
+          ],
+          "defaultOutput": "default"
+        },
+        "name": "Switch: @start?",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 1,
+        "position": [
+          1450,
+          100
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "srem",
+          "key": "traplist",
+          "member": "={{$json.phone}}"
+        },
+        "name": "Redis SREM Traplist",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1650,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "url": "={{`https://evolution.restauranteai.shop/messages`}}",
+          "method": "POST",
+          "jsonParameters": true,
+          "options": {},
+          "bodyParametersJson": "={ \"to\": $json.phone + \"@s.whatsapp.net\", \"type\": \"text\", \"text\": { \"body\": \"Atendimento retomado. Em que posso ajudar?\" } }"
+        },
+        "name": "Send Resume via Evolution",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 1,
+        "position": [
+          1850,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "insert",
+          "table": "chat_messages",
+          "columns": [
+            {
+              "name": "session_id",
+              "value": "={{$json.session_id}}"
+            },
+            {
+              "name": "phone",
+              "value": "={{$json.phone}}"
+            },
+            {
+              "name": "direction",
+              "value": "outbound"
+            },
+            {
+              "name": "message",
+              "value": "Atendimento retomado. Em que posso ajudar?"
+            }
+          ]
+        },
+        "name": "Supabase Insert ChatMessage Out",
+        "type": "n8n-nodes-base.supabase",
+        "typeVersion": 1,
+        "position": [
+          2050,
+          60
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "sadd",
+          "key": "traplist",
+          "member": "={{$json.phone}}"
+        },
+        "name": "Redis SADD Traplist",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1650,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "rules": [
+            {
