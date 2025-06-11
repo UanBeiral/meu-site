@@ -1,0 +1,378 @@
+{
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Webhook Evolution API",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "evolution",
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      }
+    },
+    {
+      "id": "2",
+      "name": "Filtrar mensagens do bot",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "value1": "={{$json.body.fromMe}}",
+              "operation": "equal",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3",
+      "name": "Processar áudio",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [500, 300],
+      "parameters": {
+        "functionCode": "if (['audioMessage', 'ptt'].includes($json.body.type)) {\n  const audioBase64 = $json.body.body;\n  return { audioBase64 };\n}\nreturn null;"
+      }
+    },
+    {
+      "id": "4",
+      "name": "OpenAI Transcription",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [750, 300],
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "model": "whisper-1",
+        "binaryProperty": "audioBase64"
+      }
+    },
+    {
+      "id": "5",
+      "name": "Verificar TrapList",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [500, 450],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "trap",
+        "key": "=traplist-{{$json.body.from}}"
+      }
+    },
+    {
+      "id": "6",
+      "name": "Comando @start/@stop",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [750, 450],
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "condition": {
+                "type": "string",
+                "value1": "={{$json.body.body}}",
+                "operation": "contains",
+                "value2": "@start"
+              }
+            },
+            {
+              "condition": {
+                "type": "string",
+                "value1": "={{$json.body.body}}",
+                "operation": "contains",
+                "value2": "@stop"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "7",
+      "name": "Agente LangChain",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1,
+      "position": [1000, 300],
+      "parameters": {
+        "model": "gpt-4-1106-preview",
+        "maxTokens": 1024,
+        "memory": "redis",
+        "sessionId": "={{$json.body.from}}",
+        "tools": [
+          "enviar_cardapio",
+          "buscar_itens",
+          "adicionar_item_confirmado",
+          "calcula_frete",
+          "cadastrar_pedido",
+          "SendWhatsappInvoice"
+        ]
+      }
+    },
+    {
+      "id": "8",
+      "name": "Enviar resposta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1250, 300],
+      "parameters": {
+        "url": "https://evo-api-url/sendMessage",
+        "method": "POST",
+        "json": {
+          "phone": "={{$json.body.from}}",
+          "message": "={{$json.output}}"
+        }
+      }
+    },
+    {
+      "id": "9",
+      "name": "Registrar no Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1250, 450],
+      "parameters": {
+        "operation": "insert",
+        "table": "chat_messages",
+        "columns": {
+          "phone": "={{$json.body.from}}",
+          "direction": "out",
+          "content": "={{$json.output}}",
+          "timestamp": "={{new Date().toISOString()}}"
+        }
+      }
+    },
+    {
+      "id": "10",
+      "name": "Follow-up Automation",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [0, 600],
+      "parameters": {
+        "mode": "everyX",
+        "interval": 30,
+        "unit": "minutes"
+      }
+    }
+  ],
+  "connections": {
+    "1": {
+      "main": [
+        [
+          {
+            "node": "2",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2": {
+      "main": [
+        [
+          {
+            "node": "3",
+            "index": 0
+          },
+          null,
+          {
+            "node": "5",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3": {
+      "main": [
+        [
+          {
+            "node": "4",
+            "index": 0
+          },
+          null,
+          {
+            "node": "7",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5": {
+      "main": [
+        [
+          null,
+          {
+            "node": "6",
+            "index": 0
+          },
+          {
+            "node": "7",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7": {
+      "main": [
+        [
+          {
+            "node": "8",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "subworkflows": [
+    {
+      "id": "enviar_cardapio",
+      "name": "enviar_cardapio",
+      "nodes": [
+        {
+          "id": "t1",
+          "name": "Obter URL Cardápio",
+          "type": "n8n-nodes-base.function",
+          "parameters": {
+            "functionCode": "return { url: 'https://supabase-url/menu.jpg' };"
+          }
+        },
+        {
+          "id": "t2",
+          "name": "Enviar via Evolution",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://evo-api-url/sendImage",
+            "method": "POST",
+            "json": {
+              "phone": "={{$json.phone}}",
+              "image": "={{$json.url}}"
+            }
+          }
+        }
+      ],
+      "connections": {}
+    },
+    {
+      "id": "buscar_itens",
+      "name": "buscar_itens",
+      "nodes": [
+        {
+          "id": "t3",
+          "name": "Query Supabase",
+          "type": "n8n-nodes-base.supabase",
+          "parameters": {
+            "operation": "select",
+            "table": "menu_items",
+            "where": "name ilike '%{{$json.query}}%'"
+          }
+        }
+      ],
+      "connections": {}
+    },
+    {
+      "id": "adicionar_item_confirmado",
+      "name": "adicionar_item_confirmado",
+      "nodes": [
+        {
+          "id": "t4",
+          "name": "Atualizar Redis",
+          "type": "n8n-nodes-base.redis",
+          "parameters": {
+            "operation": "set",
+            "key": "state:{{$json.phone}}",
+            "value": "={{JSON.stringify($json.order)}}"
+          }
+        }
+      ],
+      "connections": {}
+    },
+    {
+      "id": "calcula_frete",
+      "name": "calcula_frete",
+      "nodes": [
+        {
+          "id": "t5",
+          "name": "Geocoding API",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://maps-api/geocode",
+            "method": "GET"
+          }
+        },
+        {
+          "id": "t6",
+          "name": "Calcular Frete",
+          "type": "n8n-nodes-base.function",
+          "parameters": {
+            "functionCode": "const distance = $json.distance;\nreturn { fee: distance * 0.5 };"
+          }
+        }
+      ],
+      "connections": {}
+    },
+    {
+      "id": "cadastrar_pedido",
+      "name": "cadastrar_pedido",
+      "nodes": [
+        {
+          "id": "t7",
+          "name": "Inserir Pedido",
+          "type": "n8n-nodes-base.supabase",
+          "parameters": {
+            "operation": "insert",
+            "table": "orders",
+            "columns": {
+              "items": "={{$json.items}}",
+              "total": "={{$json.total}}",
+              "status": "pending"
+            }
+          }
+        }
+      ],
+      "connections": {}
+    },
+    {
+      "id": "SendWhatsappInvoice",
+      "name": "SendWhatsappInvoice",
+      "nodes": [
+        {
+          "id": "t8",
+          "name": "Formatar Resumo",
+          "type": "n8n-nodes-base.function",
+          "parameters": {
+            "functionCode": "return { text: `Novo pedido!\\nItens: ${$json.items}` };"
+          }
+        },
+        {
+          "id": "t9",
+          "name": "Enviar para Cozinha",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://evo-api-url/sendMessage",
+            "method": "POST",
+            "json": {
+              "phone": "+5511999999999",
+              "message": "={{$json.text}}"
+            }
+          }
+        }
+      ],
+      "connections": {}
+    }
+  ]
+}
