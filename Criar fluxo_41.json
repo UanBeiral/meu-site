@@ -1,0 +1,365 @@
+{
+  "name": "Bread & Meat Delivery - Atendimento Automático",
+  "nodes": [
+    {
+      "id": "evolution_receive",
+      "type": "webhook",
+      "position": [100, 100],
+      "parameters": {
+        "path": "evolution-in",
+        "httpMethod": "POST"
+      },
+      "name": "Webhook EvolutionAPI"
+    },
+    {
+      "id": "traplist_check",
+      "type": "redis",
+      "position": [300, 100],
+      "name": "Verifica Traplist",
+      "parameters": {
+        "operation": "get",
+        "key": "traplist-{{$json[\"phone\"]}}"
+      },
+      "credentials": "YOUR_REDIS_CREDENTIAL"
+    },
+    {
+      "id": "decision_trap",
+      "type": "if",
+      "position": [500, 100],
+      "name": "Cliente em Trap?",
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"value\"]}}",
+              "operation": "notEmpty"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "stop_response",
+      "type": "evolutionApi.sendMessage",
+      "position": [700, 80],
+      "name": "Mensagem Atendimento Pausado",
+      "parameters": {
+        "phone": "={{$json[\"phone\"]}}",
+        "text": "Seu atendimento foi pausado. Para retomar envie @start."
+      },
+      "credentials": "YOUR_EVOLUTIONAPI_CREDENTIAL"
+    },
+    {
+      "id": "check_audio",
+      "type": "if",
+      "position": [300, 250],
+      "name": "É áudio?",
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"type\"]}}",
+              "operation": "equals",
+              "value2": "audioMessage"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "openai_audio",
+      "type": "openai.audio.transcription",
+      "position": [500, 250],
+      "name": "Transcreve Áudio",
+      "parameters": {
+        "audioBase64": "={{$json[\"audioBase64\"]}}",
+        "model": "whisper-1"
+      },
+      "credentials": "YOUR_OPENAI_CREDENTIAL"
+    },
+    {
+      "id": "set_msg_text",
+      "type": "set",
+      "position": [700, 250],
+      "name": "Repassa texto transcrito",
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "text",
+              "value": "={{$json[\"transcription\"]}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "context_memory_get",
+      "type": "redis",
+      "position": [300, 400],
+      "name": "Get Memory (Estado)",
+      "parameters": {
+        "operation": "get",
+        "key": "memory-{{$json[\"phone\"]}}"
+      },
+      "credentials": "YOUR_REDIS_CREDENTIAL"
+    },
+    {
+      "id": "llm_agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [500, 400],
+      "name": "Agente LLM Bread&Meat",
+      "parameters": {
+        "model": "gpt-4-mini",
+        "memory": {
+          "type": "redis",
+          "config": {
+            "key": "memory-{{$json[\"phone\"]}}"
+          }
+        },
+        "tools": [
+          {
+            "name": "buscar_itens",
+            "type": "toolWorkflow",
+            "workflowId": "buscar_itens_id"
+          },
+          {
+            "name": "adicionar_item_confirmado",
+            "type": "toolWorkflow",
+            "workflowId": "adicionar_item_confirmado_id"
+          },
+          {
+            "name": "calcula_frete",
+            "type": "toolWorkflow",
+            "workflowId": "calcula_frete_id"
+          },
+          {
+            "name": "cadastrar_pedido",
+            "type": "toolWorkflow",
+            "workflowId": "cadastrar_pedido_id"
+          },
+          {
+            "name": "enviar_cardapio",
+            "type": "toolWorkflow",
+            "workflowId": "enviar_cardapio_id"
+          },
+          {
+            "name": "SendWhatsappInvoice",
+            "type": "toolWorkflow",
+            "workflowId": "send_whatsapp_invoice_id"
+          }
+        ],
+        "prompt": "PASTE_YOUR_FULL_PROMPT_HERE"
+      }
+    },
+    {
+      "id": "memory_set",
+      "type": "redis",
+      "position": [700, 400],
+      "name": "Set Memory (Estado)",
+      "parameters": {
+        "operation": "set",
+        "key": "memory-{{$json[\"phone\"]}}",
+        "value": "={{$json[\"updated_memory_state\"]}}"
+      },
+      "credentials": "YOUR_REDIS_CREDENTIAL"
+    },
+    {
+      "id": "supabase_log",
+      "type": "supabase.insert",
+      "position": [900, 400],
+      "name": "Log Mensagem (Supabase)",
+      "parameters": {
+        "resource": "chat_messages",
+        "fields": {
+          "session_id": "={{$json[\"session_id\"]}}",
+          "phone": "={{$json[\"phone\"]}}",
+          "message": "={{$json[\"text\"]}}",
+          "from_me": "={{$json[\"fromMe\"]}}",
+          "created_at": "={{$now}}"
+        }
+      },
+      "credentials": "YOUR_SUPABASE_CREDENTIAL"
+    },
+    {
+      "id": "send_response",
+      "type": "evolutionApi.sendMessage",
+      "position": [1100, 400],
+      "name": "Enviar resposta ao cliente",
+      "parameters": {
+        "phone": "={{$json[\"phone\"]}}",
+        "text": "={{$json[\"reply\"]}}"
+      },
+      "credentials": "YOUR_EVOLUTIONAPI_CREDENTIAL"
+    },
+    {
+      "id": "followup_timer",
+      "type": "interval",
+      "position": [1300, 100],
+      "name": "Follow-up Checker",
+      "parameters": {
+        "interval": 5,
+        "unit": "minutes"
+      }
+    },
+    {
+      "id": "followup_logic",
+      "type": "supabase.query",
+      "position": [1500, 100],
+      "name": "Verifica inatividade",
+      "parameters": {
+        "sql": "SELECT session_id, phone, MAX(created_at) as last_msg FROM chat_messages WHERE from_me = false GROUP BY session_id, phone HAVING MAX(created_at) < NOW() - INTERVAL '10 MINUTES';"
+      },
+      "credentials": "YOUR_SUPABASE_CREDENTIAL"
+    },
+    {
+      "id": "followup_send",
+      "type": "evolutionApi.sendMessage",
+      "position": [1700, 100],
+      "name": "Enviar Follow-up",
+      "parameters": {
+        "phone": "={{$json[\"phone\"]}}",
+        "text": "Olá! Percebemos que ficou uma dúvida ou você se ausentou. Podemos continuar seu atendimento?"
+      },
+      "credentials": "YOUR_EVOLUTIONAPI_CREDENTIAL"
+    },
+    {
+      "id": "cmd_if",
+      "type": "switch",
+      "position": [100, 550],
+      "name": "Comando Manual?",
+      "parameters": {
+        "cases": [
+          {
+            "value": "@start",
+            "outputIndex": 0
+          },
+          {
+            "value": "@stop",
+            "outputIndex": 1
+          }
+        ],
+        "property": "={{$json[\"text\"]}}"
+      }
+    },
+    {
+      "id": "trap_remove",
+      "type": "redis",
+      "position": [300, 550],
+      "name": "Remove Traplist (@start)",
+      "parameters": {
+        "operation": "delete",
+        "key": "traplist-{{$json[\"phone\"]}}"
+      },
+      "credentials": "YOUR_REDIS_CREDENTIAL"
+    },
+    {
+      "id": "trap_add",
+      "type": "redis",
+      "position": [300, 650],
+      "name": "Adiciona Traplist (@stop)",
+      "parameters": {
+        "operation": "set",
+        "key": "traplist-{{$json[\"phone\"]}}",
+        "value": "blocked"
+      },
+      "credentials": "YOUR_REDIS_CREDENTIAL"
+    },
+    {
+      "id": "cmd_ok",
+      "type": "evolutionApi.sendMessage",
+      "position": [500, 600],
+      "name": "Confirmação de comando",
+      "parameters": {
+        "phone": "={{$json[\"phone\"]}}",
+        "text": "={{$json[\"text\"]}} comando executado com sucesso."
+      },
+      "credentials": "YOUR_EVOLUTIONAPI_CREDENTIAL"
+    }
+  ],
+  "connections": [
+    {
+      "from": "evolution_receive",
+      "to": "traplist_check"
+    },
+    {
+      "from": "traplist_check",
+      "to": "decision_trap"
+    },
+    {
+      "from": "decision_trap",
+      "to": "stop_response",
+      "outputIndex": 0
+    },
+    {
+      "from": "decision_trap",
+      "to": "check_audio",
+      "outputIndex": 1
+    },
+    {
+      "from": "check_audio",
+      "to": "openai_audio",
+      "outputIndex": 0
+    },
+    {
+      "from": "openai_audio",
+      "to": "set_msg_text"
+    },
+    {
+      "from": "set_msg_text",
+      "to": "context_memory_get"
+    },
+    {
+      "from": "check_audio",
+      "to": "context_memory_get",
+      "outputIndex": 1
+    },
+    {
+      "from": "context_memory_get",
+      "to": "cmd_if"
+    },
+    {
+      "from": "cmd_if",
+      "to": "trap_remove",
+      "outputIndex": 0
+    },
+    {
+      "from": "cmd_if",
+      "to": "trap_add",
+      "outputIndex": 1
+    },
+    {
+      "from": "trap_remove",
+      "to": "cmd_ok"
+    },
+    {
+      "from": "trap_add",
+      "to": "cmd_ok"
+    },
+    {
+      "from": "cmd_if",
+      "to": "llm_agent",
+      "outputIndex": 2
+    },
+    {
+      "from": "llm_agent",
+      "to": "memory_set"
+    },
+    {
+      "from": "memory_set",
+      "to": "supabase_log"
+    },
+    {
+      "from": "supabase_log",
+      "to": "send_response"
+    },
+    {
+      "from": "followup_timer",
+      "to": "followup_logic"
+    },
+    {
+      "from": "followup_logic",
+      "to": "followup_send"
+    }
+  ]
+}
